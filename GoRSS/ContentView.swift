@@ -141,6 +141,7 @@ struct MenuView: View {
                             MenuButton(
                                 title: source.name ?? "未命名源",
                                 icon: "dot.radiowaves.right",
+                                iconUrl: source.iconUrl,
                                 isSelected: viewModel.selectedFilter == .source(source)
                             ) {
                                 viewModel.selectedFilter = .source(source)
@@ -226,6 +227,7 @@ struct MenuView: View {
 struct MenuButton: View {
     let title: String
     let icon: String
+    var iconUrl: String? = nil  // 新增：支持网络图标 URL
     var count: Int? = nil
     var isSelected: Bool
     var action: () -> Void
@@ -233,10 +235,34 @@ struct MenuButton: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 12) {
-                Image(systemName: icon)
-                    .font(.system(size: 18))
-                    .frame(width: 24)
-                    .foregroundStyle(isSelected ? .blue : .primary)
+                // 如果有 iconUrl，优先显示网络图标；否则显示 SF Symbol
+                if let iconUrl = iconUrl, let url = URL(string: iconUrl) {
+                    AsyncImage(url: url) { phase in
+                        if let image = phase.image {
+                            image
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                                .frame(width: 24, height: 24)
+                                .clipShape(RoundedRectangle(cornerRadius: 4))
+                        } else if phase.error != nil {
+                            // 加载失败，显示默认图标
+                            Image(systemName: icon)
+                                .font(.system(size: 18))
+                                .frame(width: 24, height: 24)
+                                .foregroundStyle(isSelected ? .blue : .primary)
+                        } else {
+                            // 加载中
+                            ProgressView()
+                                .frame(width: 24, height: 24)
+                        }
+                    }
+                } else {
+                    // 没有 iconUrl，使用 SF Symbol
+                    Image(systemName: icon)
+                        .font(.system(size: 18))
+                        .frame(width: 24, height: 24)
+                        .foregroundStyle(isSelected ? .blue : .primary)
+                }
 
                 Text(title)
                     .font(.body)

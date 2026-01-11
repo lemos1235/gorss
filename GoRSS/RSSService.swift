@@ -34,6 +34,42 @@ class RSSService {
         }
     }
     
+    /// 从 Feed 中提取图标 URL
+    func extractIconURL(url: URL) async throws -> String? {
+        let parser = FeedParser(URL: url)
+        
+        return try await withCheckedThrowingContinuation { continuation in
+            parser.parseAsync(queue: DispatchQueue.global(qos: .userInitiated)) { result in
+                switch result {
+                case .success(let feed):
+                    let iconUrl = self.extractFeedIcon(from: feed)
+                    continuation.resume(returning: iconUrl)
+                case .failure(let error):
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+    
+    /// 从不同类型的 Feed 中提取图标 URL
+    private func extractFeedIcon(from feed: Feed) -> String? {
+        switch feed {
+        case .atom(let atomFeed):
+            // Atom feed 支持 icon 和 logo 字段
+            // 优先使用 icon (square icon)，其次是 logo
+            return atomFeed.icon ?? atomFeed.logo
+            
+        case .rss(let rssFeed):
+            // RSS feed 的 image 元素包含 URL
+            return rssFeed.image?.url
+            
+        case .json(let jsonFeed):
+            // JSON Feed 支持 favicon 和 icon
+            // 优先使用 favicon (small square icon)，其次是 icon
+            return jsonFeed.favicon ?? jsonFeed.icon
+        }
+    }
+    
     private func mapFeedToItems(feed: Feed, sourceID: UUID? = nil) -> [RSSItem] {
         var rssItems: [RSSItem] = []
         
@@ -51,8 +87,6 @@ class RSSService {
                 var imageUrl: URL?
                 if let imageLink = entry.links?.first(where: { $0.attributes?.type?.hasPrefix("image") == true })?.attributes?.href {
                     imageUrl = URL(string: imageLink)
-                } else {
-                    imageUrl = extractImageURL(from: entry.content?.value) ?? extractImageURL(from: summary)
                 }
                 
                 return RSSItem(
@@ -81,8 +115,6 @@ class RSSService {
                     imageUrl = URL(string: enclosure)
                 } else if let mediaContent = item.media?.mediaContents?.first?.attributes?.url {
                      imageUrl = URL(string: mediaContent)
-                } else {
-                    imageUrl = extractImageURL(from: item.content?.contentEncoded) ?? extractImageURL(from: summary)
                 }
                 
                 return RSSItem(
@@ -106,8 +138,6 @@ class RSSService {
                 var imageUrl: URL?
                 if let image = item.image {
                     imageUrl = URL(string: image)
-                } else {
-                    imageUrl = extractImageURL(from: item.contentHtml) ?? extractImageURL(from: summary)
                 }
                 
                 return RSSItem(
@@ -122,22 +152,5 @@ class RSSService {
         }
         
         return rssItems.sorted(by: { $0.pubDate > $1.pubDate })
-    }
-    
-    // Helper to extract first image URL from HTML string
-    private func extractImageURL(from html: String?) -> URL? {
-        guard let html = html else { return nil }
-        
-        let pattern = "<img[^>]+src=\"([^\"]+)\""
-        if let range = html.range(of: pattern, options: .regularExpression) {
-            let match = html[range]
-            if let range = match.range(of: "src=\"([^\"]+)\"", options: .regularExpression) {
-                let srcAttribute = match[range]
-                // Remove src=" and "
-                let urlString = srcAttribute.dropFirst(5).dropLast()
-                return URL(string: String(urlString))
-            }
-        }
-        return nil
     }
 }

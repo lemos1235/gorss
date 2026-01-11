@@ -63,19 +63,9 @@ final class FeedViewModel: ObservableObject {
     
 
     init() {
-
         loadSources()
         loadReadStatus()
         loadStarredStatus()
-
-        // Add default source if empty
-
-        if sources.isEmpty {
-
-            addSource(url: URL(string: "https://www.apple.com/newsroom/rss-feed.rss")!, name: "Apple Newsroom")
-
-        }
-
     }
 
     
@@ -94,28 +84,18 @@ final class FeedViewModel: ObservableObject {
         // Try to fetch to validate
         _ = try await RSSService.shared.fetchFeed(url: url)
         
+        // Extract icon URL from feed
+        let iconUrl = try? await RSSService.shared.extractIconURL(url: url)
+        
         // If success, add it
         await MainActor.run {
-            let newSource = FeedSource(url: url, name: name)
+            let newSource = FeedSource(url: url, name: name, iconUrl: iconUrl)
             sources.append(newSource)
             sortSources()
             saveSources()
         }
         
         await loadAllFeeds()
-    }
-
-    func addSource(url: URL, name: String? = nil) {
-
-        let newSource = FeedSource(url: url, name: name)
-
-        sources.append(newSource)
-        sortSources()
-
-        saveSources()
-
-        Task { await loadAllFeeds() }
-
     }
     
     func moveSource(from source: IndexSet, to destination: Int) {
@@ -134,10 +114,13 @@ final class FeedViewModel: ObservableObject {
                 // Validate new URL
                 _ = try await RSSService.shared.fetchFeed(url: newUrl)
                 
+                // Extract icon URL from the new feed
+                let iconUrl = try? await RSSService.shared.extractIconURL(url: newUrl)
+                
                 // Create new source with new URL but same ID (to keep user preference if possible, 
                 // but ID is UUID, so it's fine. 
                 // However, `url` is `let` in FeedSource. We need to create a new struct.)
-                updatedSource = FeedSource(id: source.id, url: newUrl, name: newName, dateAdded: source.dateAdded)
+                updatedSource = FeedSource(id: source.id, url: newUrl, name: newName, iconUrl: iconUrl, dateAdded: source.dateAdded)
                 
                 // Since URL changed, we should reload feeds
                 sources[index] = updatedSource
@@ -145,7 +128,9 @@ final class FeedViewModel: ObservableObject {
                 saveSources()
                 await loadAllFeeds()
             } else {
-                // Only name changed
+                let iconUrl = try? await RSSService.shared.extractIconURL(url: source.url)
+                updatedSource = FeedSource(id: source.id, url: source.url, name: newName, iconUrl: iconUrl, dateAdded: source.dateAdded)
+                
                 sources[index] = updatedSource
                 sortSources()
                 saveSources()
