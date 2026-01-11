@@ -22,8 +22,11 @@ let package = Package(
             exclude: [
                 "GoRSSApp.swift", 
                 "ContentView.swift", 
-                "AddFeedView.swift", 
-                "SafariView.swift"
+                "AddFeedView.swift",
+                "EditFeedView.swift",
+                "SettingsView.swift",
+                "SafariView.swift",
+                "Assets.xcassets"
             ],
             sources: [
                 "RSSItem.swift", 
