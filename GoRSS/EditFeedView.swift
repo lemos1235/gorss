@@ -36,13 +36,13 @@ struct EditFeedView: View {
                     VStack(spacing: 24) {
                         // Header
                         VStack(spacing: 12) {
-                            Image(systemName: "slider.horizontal.3")
+                            Image(systemName: "antenna.radiowaves.left.and.right")
                                 .font(.system(size: 40))
                                 .foregroundStyle(.tint)
                                 .symbolEffect(.bounce, value: isValidating)
                                 .padding(.top, 20)
                             
-                            Text("编辑订阅源")
+                            Text("编辑 RSS 源")
                                 .font(.headline)
                         }
                         

@@ -19,7 +19,7 @@ final class FeedViewModel: ObservableObject {
 
     @Published var sources: [FeedSource] = []
 
-    @Published var isLoading = false
+    @Published var isLoading = true
 
     @Published var errorMessage: String?
     
@@ -293,6 +293,7 @@ final class FeedViewModel: ObservableObject {
     func loadAllFeeds() async {
         guard !sources.isEmpty else {
             items = []
+            isLoading = false
             return
         }
         

@@ -88,7 +88,7 @@ struct MenuView: View {
                     sectionTitle("文章")
 
                     MenuButton(
-                        title: "所有文章",
+                        title: "全部",
                         icon: "tray",
                         count: viewModel.items.count,
                         isSelected: viewModel.selectedFilter == .all
@@ -151,7 +151,6 @@ struct MenuView: View {
                                     sourceToEdit = source
                                 } label: {
                                     Text("编辑订阅")
-                                    Image(systemName: "pencil")
                                 }
                                 
                                 Button(role: .destructive) {
@@ -159,7 +158,6 @@ struct MenuView: View {
                                     showDeleteConfirmation = true
                                 } label: {
                                     Text("删除订阅")
-                                    Image(systemName: "trash")
                                 }
                             }
                         }
@@ -285,8 +283,11 @@ struct MainFeedView: View {
     @Binding var selectedItemURL: URL?
     
     var navigationTitle: String {
+        if viewModel.isLoading && viewModel.items.isEmpty {
+            return ""
+        }
         switch viewModel.selectedFilter {
-        case .all: return "所有文章"
+        case .all: return "全部"
         case .starred: return "收藏"
         case .source(let source): return source.name ?? "订阅源"
         }
@@ -329,9 +330,20 @@ struct MainFeedView: View {
         .scrollContentBackground(.hidden)
         .background(Color(uiColor: .systemGroupedBackground))
         .navigationTitle(navigationTitle)
-        .navigationBarTitleDisplayMode(.large)
+        .navigationBarTitleDisplayMode(.inline)
         .refreshable {
             await viewModel.loadAllFeeds()
+        }
+        .overlay {
+            if viewModel.isLoading {
+                ProgressView()
+            } else if viewModel.filteredItems.isEmpty {
+                ContentUnavailableView(
+                    "无文章",
+                    systemImage: "newspaper",
+                    description: Text("尝试刷新或添加更多订阅源")
+                )
+            }
         }
     }
 }
