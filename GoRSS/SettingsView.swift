@@ -13,6 +13,7 @@ struct SettingsView: View {
     
     @State private var showClearReadConfirmation = false
     @State private var showClearFavoritesConfirmation = false
+    @State private var showClearCacheConfirmation = false
     
     var body: some View {
         NavigationStack {
@@ -38,6 +39,14 @@ struct SettingsView: View {
                 Button("取消", role: .cancel) { }
             } message: {
                 Text("此操作将移除所有收藏的文章，无法撤销。")
+            }
+            .alert("确认清除缓存数据？", isPresented: $showClearCacheConfirmation) {
+                Button("清除", role: .destructive) {
+                    viewModel.clearCache()
+                }
+                Button("取消", role: .cancel) { }
+            } message: {
+                Text("此操作将清除本地缓存数据（已收藏的文章除外）。")
             }
         }
         .preferredColorScheme(appTheme.colorScheme)
@@ -72,6 +81,12 @@ struct SettingsView: View {
                 showClearFavoritesConfirmation = true
             } label: {
                 Label("清空收藏列表", systemImage: "star.slash")
+            }
+            
+            Button(role: .destructive) {
+                showClearCacheConfirmation = true
+            } label: {
+                Label("清除缓存数据", systemImage: "trash")
             }
         } header: {
             Text("数据管理")

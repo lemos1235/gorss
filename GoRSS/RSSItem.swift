@@ -7,7 +7,7 @@
 
 import Foundation
 
-struct RSSItem: Identifiable, Hashable, Sendable {
+struct RSSItem: Identifiable, Hashable, Sendable, Codable {
     let id: UUID
     let title: String
     let summary: String

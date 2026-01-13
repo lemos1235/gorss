@@ -6,27 +6,30 @@
 //
 
 import Foundation
-
 import SwiftUI
-
 import Combine
 
-
-
 final class FeedViewModel: ObservableObject {
-
+    // MARK: - Published Properties
     @Published var items: [RSSItem] = []
-
     @Published var sources: [FeedSource] = []
-
     @Published var isLoading = true
-
     @Published var errorMessage: String?
-    
     @Published var readItemIDs: Set<String> = []
     @Published var starredItemIDs: Set<String> = []
+    @Published var selectedFilter: FeedFilter = .all
 
-    // MARK: - Filter
+    // MARK: - Constants & Keys
+    private let sourcesKey = "saved_feed_sources"
+    private let readStatusKey = "read_item_ids"
+    private let starredStatusKey = "starred_item_ids"
+    private let itemsFileName = "saved_rss_items.json"
+    
+    private var itemsFileURL: URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent(itemsFileName)
+    }
+
+    // MARK: - Filter Type
     enum FeedFilter: Equatable {
         case all
         case starred
@@ -42,8 +45,6 @@ final class FeedViewModel: ObservableObject {
         }
     }
     
-    @Published var selectedFilter: FeedFilter = .all
-    
     var filteredItems: [RSSItem] {
         switch selectedFilter {
         case .all:
@@ -55,52 +56,87 @@ final class FeedViewModel: ObservableObject {
         }
     }
 
-
-    private let sourcesKey = "saved_feed_sources"
-    private let readStatusKey = "read_item_ids"
-    private let starredStatusKey = "starred_item_ids"
-
-    
-
+    // MARK: - Initialization
     init() {
         loadSources()
         loadReadStatus()
         loadStarredStatus()
+        loadItems()
     }
 
-    
-
-    // MARK: - Feed Management
-
-    private func sortSources() {
-        sources.sort { (source1, source2) -> Bool in
-            let name1 = source1.name ?? source1.url.absoluteString
-            let name2 = source2.name ?? source2.url.absoluteString
-            return name1.localizedStandardCompare(name2) == .orderedAscending
+    // MARK: - Feed Fetching
+    @MainActor
+    func loadAllFeeds() async {
+        guard !sources.isEmpty else {
+            if items.isEmpty { isLoading = false }
+            return
         }
+        
+        isLoading = true
+        errorMessage = nil
+        
+        do {
+            let newItems: [RSSItem] = try await withThrowingTaskGroup(of: [RSSItem].self) { group in
+                for source in sources {
+                    group.addTask {
+                        return try await RSSService.shared.fetchFeed(url: source.url, sourceID: source.id)
+                    }
+                }
+                
+                var results: [RSSItem] = []
+                for try await feedItems in group {
+                    results.append(contentsOf: feedItems)
+                }
+                return results
+            }
+            
+            var currentItemsDict = Dictionary(uniqueKeysWithValues: items.map { ($0.link?.absoluteString ?? $0.title, $0) })
+            var mergedItems: [RSSItem] = []
+            
+            for newItem in newItems {
+                let key = newItem.link?.absoluteString ?? newItem.title
+                if let existingItem = currentItemsDict[key] {
+                    let updatedItem = RSSItem(
+                        id: existingItem.id,
+                        title: newItem.title,
+                        summary: newItem.summary,
+                        link: newItem.link,
+                        pubDate: newItem.pubDate,
+                        imageUrl: newItem.imageUrl,
+                        sourceID: newItem.sourceID
+                    )
+                    mergedItems.append(updatedItem)
+                    currentItemsDict.removeValue(forKey: key)
+                } else {
+                    mergedItems.append(newItem)
+                }
+            }
+            
+            mergedItems.append(contentsOf: currentItemsDict.values)
+            let sortedItems = mergedItems.sorted { $0.pubDate > $1.pubDate }
+            
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
+                self.items = sortedItems
+            }
+            self.saveItems()
+        } catch {
+            errorMessage = "部分源更新失败: \(error.localizedDescription)"
+        }
+        isLoading = false
     }
 
+    // MARK: - Source Management
     func validateAndAddSource(url: URL, name: String? = nil) async throws {
-        // Try to fetch to validate
         _ = try await RSSService.shared.fetchFeed(url: url)
-        
-        // Extract icon URL from feed
         let iconUrl = try? await RSSService.shared.extractIconURL(url: url)
         
-        // If success, add it
         await MainActor.run {
             let newSource = FeedSource(url: url, name: name, iconUrl: iconUrl)
             sources.append(newSource)
             sortSources()
             saveSources()
         }
-        
         await loadAllFeeds()
-    }
-    
-    func moveSource(from source: IndexSet, to destination: Int) {
-        sources.move(fromOffsets: source, toOffset: destination)
-        saveSources()
     }
     
     func updateSource(_ source: FeedSource, newName: String, newUrl: URL? = nil) async throws {
@@ -108,21 +144,11 @@ final class FeedViewModel: ObservableObject {
             var updatedSource = sources[index]
             updatedSource.name = newName
             
-            // If URL is changing, we might want to validate it first or just update it.
-            // Assuming validation happens before calling this function or we do it here.
             if let newUrl = newUrl, newUrl != source.url {
-                // Validate new URL
                 _ = try await RSSService.shared.fetchFeed(url: newUrl)
-                
-                // Extract icon URL from the new feed
                 let iconUrl = try? await RSSService.shared.extractIconURL(url: newUrl)
-                
-                // Create new source with new URL but same ID (to keep user preference if possible, 
-                // but ID is UUID, so it's fine. 
-                // However, `url` is `let` in FeedSource. We need to create a new struct.)
                 updatedSource = FeedSource(id: source.id, url: newUrl, name: newName, iconUrl: iconUrl, dateAdded: source.dateAdded)
                 
-                // Since URL changed, we should reload feeds
                 sources[index] = updatedSource
                 sortSources()
                 saveSources()
@@ -130,7 +156,6 @@ final class FeedViewModel: ObservableObject {
             } else {
                 let iconUrl = try? await RSSService.shared.extractIconURL(url: source.url)
                 updatedSource = FeedSource(id: source.id, url: source.url, name: newName, iconUrl: iconUrl, dateAdded: source.dateAdded)
-                
                 sources[index] = updatedSource
                 sortSources()
                 saveSources()
@@ -143,58 +168,34 @@ final class FeedViewModel: ObservableObject {
             sources.remove(at: index)
             saveSources()
             
-            // If the deleted source was selected, switch to 'all'
             if case .source(let selectedSource) = selectedFilter, selectedSource.id == source.id {
                 selectedFilter = .all
             }
-            
             Task { await loadAllFeeds() }
         }
     }
-
     
-
     func removeSource(at offsets: IndexSet) {
-
         sources.remove(atOffsets: offsets)
-
         saveSources()
-
         Task { await loadAllFeeds() }
-
+    }
+    
+    func moveSource(from source: IndexSet, to destination: Int) {
+        sources.move(fromOffsets: source, toOffset: destination)
+        saveSources()
     }
 
-    
-
-    private func saveSources() {
-
-        if let encoded = try? JSONEncoder().encode(sources) {
-
-            UserDefaults.standard.set(encoded, forKey: sourcesKey)
-
+    private func sortSources() {
+        sources.sort { (source1, source2) -> Bool in
+            let name1 = source1.name ?? source1.url.absoluteString
+            let name2 = source2.name ?? source2.url.absoluteString
+            return name1.localizedStandardCompare(name2) == .orderedAscending
         }
-
     }
 
-    
-
-    private func loadSources() {
-
-        if let data = UserDefaults.standard.data(forKey: sourcesKey),
-
-           let decoded = try? JSONDecoder().decode([FeedSource].self, from: data) {
-
-            sources = decoded
-            sortSources()
-
-        }
-
-    }
-    
-    // MARK: - Read Status Management
-    
+    // MARK: - Read Status
     func isRead(_ item: RSSItem) -> Bool {
-        // Use link as primary ID, fallback to title
         let id = item.link?.absoluteString ?? item.title
         return readItemIDs.contains(id)
     }
@@ -219,14 +220,8 @@ final class FeedViewModel: ObservableObject {
         readItemIDs.removeAll()
         saveReadStatus()
     }
-    
-    func clearStarredStatus() {
-        starredItemIDs.removeAll()
-        saveStarredStatus()
-    }
 
-    // MARK: - Starred Management
-    
+    // MARK: - Starred Status
     func isStarred(_ item: RSSItem) -> Bool {
         let id = item.link?.absoluteString ?? item.title
         return starredItemIDs.contains(id)
@@ -241,6 +236,45 @@ final class FeedViewModel: ObservableObject {
         }
         saveStarredStatus()
     }
+
+    func clearStarredStatus() {
+        starredItemIDs.removeAll()
+        saveStarredStatus()
+    }
+
+    // MARK: - Cache Management
+    func clearCache() {
+        items = items.filter { isStarred($0) }
+        saveItems()
+    }
+
+    // MARK: - Persistence Helpers
+    private func saveSources() {
+        if let encoded = try? JSONEncoder().encode(sources) {
+            UserDefaults.standard.set(encoded, forKey: sourcesKey)
+        }
+    }
+
+    private func loadSources() {
+        if let data = UserDefaults.standard.data(forKey: sourcesKey),
+           let decoded = try? JSONDecoder().decode([FeedSource].self, from: data) {
+            sources = decoded
+            sortSources()
+        }
+    }
+    
+    private func saveReadStatus() {
+        if let encoded = try? JSONEncoder().encode(readItemIDs) {
+            UserDefaults.standard.set(encoded, forKey: readStatusKey)
+        }
+    }
+
+    private func loadReadStatus() {
+        if let data = UserDefaults.standard.data(forKey: readStatusKey),
+           let decoded = try? JSONDecoder().decode(Set<String>.self, from: data) {
+            readItemIDs = decoded
+        }
+    }
     
     private func saveStarredStatus() {
         if let encoded = try? JSONEncoder().encode(starredItemIDs) {
@@ -254,66 +288,23 @@ final class FeedViewModel: ObservableObject {
             starredItemIDs = decoded
         }
     }
-
-    private func saveReadStatus() {
-        if let encoded = try? JSONEncoder().encode(readItemIDs) {
-            UserDefaults.standard.set(encoded, forKey: readStatusKey)
-        }
-    }
-
-    private func loadReadStatus() {
-        if let data = UserDefaults.standard.data(forKey: readStatusKey),
-           let decoded = try? JSONDecoder().decode(Set<String>.self, from: data) {
-            readItemIDs = decoded
-        }
-    }
-
     
-
-    // MARK: - Fetching
-
-    
-
-    @MainActor
-    func loadAllFeeds() async {
-        guard !sources.isEmpty else {
-            items = []
-            isLoading = false
-            return
-        }
-        
-        isLoading = true
-        errorMessage = nil
-        
+    private func saveItems() {
         do {
-            // Concurrent fetching using TaskGroup
-            let allItems: [RSSItem] = try await withThrowingTaskGroup(of: [RSSItem].self) { group in
-                for source in sources {
-                    group.addTask {
-                        return try await RSSService.shared.fetchFeed(url: source.url, sourceID: source.id)
-                    }
-                }
-                
-                var results: [RSSItem] = []
-                for try await feedItems in group {
-                    results.append(contentsOf: feedItems)
-                }
-                return results
-            }
-            
-            // Sort by date (newest first)
-            let sortedItems = allItems.sorted { item1, item2 in
-                return item1.pubDate > item2.pubDate
-            }
-            
-            withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
-                self.items = sortedItems
-            }
+            let data = try JSONEncoder().encode(items)
+            try data.write(to: itemsFileURL)
         } catch {
-            errorMessage = "部分源更新失败: \(error.localizedDescription)"
+            print("Failed to save items: \(error)")
         }
-        
-        isLoading = false
     }
-
+    
+    private func loadItems() {
+        do {
+            let data = try Data(contentsOf: itemsFileURL)
+            let decoded = try JSONDecoder().decode([RSSItem].self, from: data)
+            items = decoded
+        } catch {
+            print("Failed to load items: \(error)")
+        }
+    }
 }
